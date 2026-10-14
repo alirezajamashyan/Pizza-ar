@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
 /* ═══════════════════════════════════════════════════════════
    پیتزا در واقعیت افزوده — استایل
@@ -331,6 +333,7 @@ a.btn { position: relative; display: block; }
   z-index: 10;
 }
 .toast.show { opacity: 1; transform: none; }
+#mapScreen ~ .toast { z-index: 30; }
 .toast.info { background: var(--basil); color: var(--olive); }
 
 /* داخل AR پس‌زمینهٔ ریشه باید شفاف باشد تا تصویر دوربین دیده شود */
@@ -340,6 +343,37 @@ html.ar-active, html.ar-active body { background: transparent; }
   * { transition: none !important; }
 }
 
+
+/* ───────── حالت نقشه ───────── */
+#mapScreen { position: absolute; inset: 0; z-index: 20; background: var(--olive); }
+#map { position: absolute; inset: 0; z-index: 0; direction: ltr; background: #dfe8d8; }
+.leaflet-container { font-family: inherit; }
+.map-top {
+  position: absolute; z-index: 1000; inset-inline: 10px;
+  top: calc(10px + var(--safe-top));
+  display: flex; gap: 8px; align-items: flex-start; pointer-events: none;
+}
+.map-top > * { pointer-events: auto; }
+.map-info {
+  flex: 1; padding: 10px 14px; border-radius: 14px;
+  background: var(--glass); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  line-height: 1.7; font-size: 0.92rem; color: var(--cheese);
+}
+.map-info small { display: block; opacity: 0.75; font-size: 0.78rem; }
+.map-bottom {
+  position: absolute; z-index: 1000; inset-inline: 12px;
+  bottom: calc(14px + var(--safe-bottom));
+  display: flex; gap: 10px; align-items: stretch;
+}
+.map-bottom .btn.primary { flex: 1; }
+.map-bottom .btn.primary.ready { animation: pzpulse 1.4s infinite; }
+@keyframes pzpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 65, 45, 0.6); }
+  50% { box-shadow: 0 0 0 12px rgba(229, 65, 45, 0); }
+}
+.pz-pin { font-size: 30px; line-height: 36px; text-align: center; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5)); }
+.pz-pop { display: flex; align-items: center; gap: 10px; direction: rtl; font-family: inherit; }
+.pz-pop button { border: 0; border-radius: 8px; padding: 4px 10px; background: var(--tomato); color: #fff; font: inherit; font-size: 0.8rem; }
 </style>
 
   <!-- Three.js از CDN (نسخهٔ ثابت). برای استفادهٔ آفلاین README را ببینید. -->
@@ -389,11 +423,25 @@ html.ar-active, html.ar-active body { background: transparent; }
         <label class="field"><span>شعاع نمایش پیتزا <b id="geoRadiusVal">۳۰ متر</b></span><input id="geoRadius" type="range" min="1" max="300" step="1" value="30"></label>
         <label class="field"><span>اندازهٔ پیتزا در لوکیشن <b id="geoSizeVal">۲ متر</b></span><input id="geoSize" type="range" min="0.5" max="10" step="0.5" value="2"></label>
         <button id="btnGeoClear" class="btn ghost">پاک کردن همهٔ لوکیشن‌ها</button>
+        <button id="btnMap" class="btn secondary">🗺️ نقشهٔ پیتزاها (پیدا کردن با دوربین)</button>
         <button id="btnGeoStart" class="btn primary" disabled>شروع حالت لوکیشن (GPS + دوربین)</button>
       </section>
 
       <p class="small note">در حالت لوکیشن، GPS فقط برای فهمیدن «ورود به محدوده» استفاده می‌شود (دقت آن چند متر است). بعد از ورود، دوربین را آرام روی زمین یا یک سطح صاف بگیرید؛ پیتزا خودکار روی سطح می‌نشیند، با AR Anchor ثابت می‌شود و از آن به بعد GPS و قطب‌نما روی جای آن اثری ندارند. با دور شدن از محدوده، پیتزا محو می‌شود. اگر مرورگر WebXR نداشته باشد، «حالت ساده» (فقط ردیابی چرخشی، بدون Anchor) جایگزین می‌شود.</p>
     </main>
+
+    <!-- ───── حالت نقشه ───── -->
+    <section id="mapScreen" class="hidden">
+      <div id="map"></div>
+      <div class="map-top">
+        <button id="btnMapBack" class="chip">بازگشت</button>
+        <div id="mapInfo" class="map-info" role="status"></div>
+      </div>
+      <div class="map-bottom">
+        <button id="btnMapLocate" class="btn ghost" style="background:var(--glass)" aria-label="موقعیت من">📍</button>
+        <button id="btnMapCam" class="btn primary" disabled>🍕 ورود به دوربین و پیدا کردن پیتزا</button>
+      </div>
+    </section>
 
     <!-- ───── رابط داخل AR ───── -->
     <section id="hud" class="hidden">
@@ -855,6 +903,7 @@ async function startAR(withGeo = false) {
 
   document.documentElement.classList.add('ar-active');
   $('landing').classList.add('hidden');
+  mapHideForAR();
   $('hud').classList.remove('hidden');
   $('floorField').classList.toggle('hidden', !!hitTestSource);
   syncUI();
@@ -885,7 +934,7 @@ function onSessionEnd() {
 
   document.documentElement.classList.remove('ar-active');
   $('hud').classList.add('hidden');
-  $('landing').classList.remove('hidden');
+  if (mapReturn) showMapAfterAR(); else $('landing').classList.remove('hidden');
   $('sizePanel').classList.add('hidden');
 }
 
@@ -1341,6 +1390,7 @@ async function startGyro(withGeo = false) {
 
   document.documentElement.classList.add('ar-active');
   $('landing').classList.add('hidden');
+  mapHideForAR();
   $('hud').classList.remove('hidden');
   $('floorField').classList.remove('hidden');
   $('fovField').classList.remove('hidden');
@@ -1385,7 +1435,7 @@ function stopGyro() {
 
   document.documentElement.classList.remove('ar-active');
   $('hud').classList.add('hidden');
-  $('landing').classList.remove('hidden');
+  if (mapReturn) showMapAfterAR(); else $('landing').classList.remove('hidden');
   $('sizePanel').classList.add('hidden');
   $('floorField').classList.add('hidden');
   $('fovField').classList.add('hidden');
@@ -2120,10 +2170,182 @@ function requestGps() {
   );
 }
 
+/* ───────────── حالت نقشه ─────────────
+   نقشه فقط پیتزاها و موقعیت شما را نشان می‌دهد. وقتی وارد شعاع یک پیتزا شدید،
+   دکمهٔ دوربین فعال می‌شود و همان حالت لوکیشن (GPS + AR) شروع می‌شود.
+   بعد از خروج از دوربین، دوباره به نقشه برمی‌گردید. */
+let mapReturn = false;   // آیا دوربین از صفحهٔ نقشه شروع شده؟
+const mapUI = { map: null, open: false, timer: null, pizzaLayer: null, user: null, acc: null, fitted: false, inside: false };
+
+function ensureMap() {
+  if (mapUI.map) return true;
+  if (!window.L) { toast('کتابخانهٔ نقشه بارگذاری نشد. اینترنت را بررسی کنید و صفحه را دوباره باز کنید.'); return false; }
+  const m = L.map('map', { zoomControl: false, maxZoom: 19 });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
+  m.setView([35.6892, 51.389], 15);
+  mapUI.pizzaLayer = L.layerGroup().addTo(m);
+  // نگه داشتن انگشت روی نقشه = افزودن پیتزا
+  m.on('contextmenu', (e) => {
+    addGeoItems([{ name: '', lat: e.latlng.lat, lon: e.latlng.lng }]);
+    drawMapPizzas();
+    mapTick();
+    toast('پیتزا اضافه شد 🍕', 'info', 1800);
+  });
+  mapUI.map = m;
+  return true;
+}
+
+function drawMapPizzas() {
+  mapUI.pizzaLayer.clearLayers();
+  geo.list.forEach((loc) => {
+    L.circle([loc.lat, loc.lon], {
+      radius: geo.radius, color: '#e5412d', weight: 1.5, fillColor: '#e5412d', fillOpacity: 0.12, interactive: false,
+    }).addTo(mapUI.pizzaLayer);
+    const mk = L.marker([loc.lat, loc.lon], {
+      icon: L.divIcon({ className: 'pz-pin', html: '<span>🍕</span>', iconSize: [36, 36], iconAnchor: [18, 18] }),
+    }).addTo(mapUI.pizzaLayer);
+    const box = document.createElement('div');
+    box.className = 'pz-pop';
+    const t = document.createElement('b');
+    t.textContent = loc.name;
+    const del = document.createElement('button');
+    del.textContent = 'حذف';
+    del.addEventListener('click', () => {
+      geo.list = geo.list.filter((x) => x.id !== loc.id);
+      saveGeo();
+      renderGeoList();
+      drawMapPizzas();
+      mapTick();
+    });
+    box.append(t, del);
+    mk.bindPopup(box);
+  });
+}
+
+function fitMap() {
+  const pts = geo.list.map((l) => [l.lat, l.lon]);
+  if (geo.pos) pts.push([geo.pos.lat, geo.pos.lon]);
+  if (!pts.length) return;
+  if (pts.length === 1) mapUI.map.setView(pts[0], 17);
+  else mapUI.map.fitBounds(pts, { padding: [70, 70], maxZoom: 18 });
+}
+
+function clearMapUser() {
+  if (mapUI.user) { mapUI.user.remove(); mapUI.user = null; }
+  if (mapUI.acc) { mapUI.acc.remove(); mapUI.acc = null; }
+}
+
+function mapTick() {
+  if (!mapUI.open) return;
+  const m = mapUI.map;
+  if (geo.pos) {
+    const ll = [geo.pos.lat, geo.pos.lon];
+    const accR = geo.accuracy || 10;
+    if (!mapUI.user) {
+      mapUI.acc = L.circle(ll, { radius: accR, color: '#4a90e2', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(m);
+      mapUI.user = L.circleMarker(ll, { radius: 8, color: '#fff', weight: 3, fillColor: '#4a90e2', fillOpacity: 1, interactive: false }).addTo(m);
+    } else {
+      mapUI.user.setLatLng(ll);
+      mapUI.acc.setLatLng(ll);
+      mapUI.acc.setRadius(accR);
+    }
+    if (!mapUI.fitted) { fitMap(); mapUI.fitted = true; }
+  }
+
+  const info = $('mapInfo');
+  const cam = $('btnMapCam');
+  let inside = false;
+  if (!geo.list.length) {
+    info.innerHTML = 'هنوز پیتزایی نیست.<small>انگشت را روی نقشه نگه دارید تا یک پیتزا اضافه شود.</small>';
+  } else if (!geo.pos) {
+    info.innerHTML = 'در انتظار GPS…<small>بیرون از ساختمان بایستید و مجوز موقعیت را بدهید.</small>';
+  } else {
+    let best = null;
+    geo.list.forEach((l) => {
+      const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, l.lat, l.lon);
+      const d = Math.hypot(dE, dN);
+      if (!best || d < best.d) best = { d, l };
+    });
+    inside = best.d <= geo.radius;
+    if (inside) {
+      info.innerHTML = '🍕 نزدیک پیتزا هستید! (' + fmtDist(best.d) + ')<small>وارد دوربین شوید و زمین را بگردید.</small>';
+    } else {
+      info.innerHTML = fmtDist(best.d) + ' تا ' + best.l.name +
+        '<small>' + fmtDist(best.d - geo.radius) + ' تا ورود به محدوده</small>';
+    }
+  }
+  cam.disabled = !inside;
+  cam.classList.toggle('ready', inside);
+  if (inside && !mapUI.inside && navigator.vibrate) navigator.vibrate(200);
+  mapUI.inside = inside;
+}
+
+function openMap() {
+  if (!ensureMap()) return;
+  $('landing').classList.add('hidden');
+  $('mapScreen').classList.remove('hidden');
+  mapUI.open = true;
+  mapUI.fitted = false;
+  mapUI.inside = false;
+  beginGeoWatch();
+  drawMapPizzas();
+  setTimeout(() => { if (mapUI.open) { mapUI.map.invalidateSize(); fitMap(); } }, 60);
+  clearInterval(mapUI.timer);
+  mapUI.timer = setInterval(mapTick, 1000);
+  mapTick();
+}
+
+function hideMapScreen() {
+  mapUI.open = false;
+  clearInterval(mapUI.timer);
+  mapUI.timer = null;
+  clearMapUser();
+  $('mapScreen').classList.add('hidden');
+}
+
+function closeMap() {
+  hideMapScreen();
+  mapReturn = false;
+  endGeoWatch();
+  $('landing').classList.remove('hidden');
+}
+
+/** وقتی دوربین (AR) شروع شد، صفحهٔ نقشه پنهان می‌شود */
+function mapHideForAR() {
+  if (mapUI.open) hideMapScreen();
+}
+
+/** بعد از خروج از دوربین، اگر از نقشه آمده بودیم به نقشه برمی‌گردیم */
+function showMapAfterAR() {
+  if (!mapUI.map) { mapReturn = false; $('landing').classList.remove('hidden'); return; }
+  openMap();
+}
+
+function setupMapUI() {
+  $('btnMap').addEventListener('click', openMap);
+  $('btnMapBack').addEventListener('click', closeMap);
+  $('btnMapLocate').addEventListener('click', () => {
+    if (geo.pos) mapUI.map.setView([geo.pos.lat, geo.pos.lon], Math.max(mapUI.map.getZoom(), 17));
+    else toast('هنوز GPS پیدا نشده.', 'info', 2000);
+  });
+  $('btnMapCam').addEventListener('click', async () => {
+    if (!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      toast('دوربین در دسترس نیست (صفحه باید با HTTPS باز شود).');
+      return;
+    }
+    mapReturn = true;
+    let ok = false;
+    if (xrSupported) ok = await startAR(true);          // اولویت: AR واقعی
+    if (!ok && !session) await startGyro(true);         // جایگزین: حالت ساده
+    if (!session && !gyro.active) beginGeoWatch();      // شروع نشد؛ روی نقشه می‌مانیم
+  });
+}
+
 /* ───────────── راه‌اندازی ───────────── */
 
 setupUI();
 setupGeoUI();
+setupMapUI();
 setupPermUI();
 applyDisplayMode();
 syncUI();
