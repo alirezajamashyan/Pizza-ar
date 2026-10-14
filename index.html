@@ -386,7 +386,7 @@ html.ar-active, html.ar-active body { background: transparent; }
           <button id="btnGeoHere" class="btn ghost">موقعیت فعلی من</button>
         </div>
         <ul id="geoList" class="geo-list"></ul>
-        <label class="field"><span>شعاع نمایش پیتزا <b id="geoRadiusVal">۳۰ متر</b></span><input id="geoRadius" type="range" min="10" max="300" step="5" value="30"></label>
+        <label class="field"><span>شعاع نمایش پیتزا <b id="geoRadiusVal">۳۰ متر</b></span><input id="geoRadius" type="range" min="1" max="300" step="1" value="30"></label>
         <label class="field"><span>اندازهٔ پیتزا در لوکیشن <b id="geoSizeVal">۲ متر</b></span><input id="geoSize" type="range" min="0.5" max="10" step="0.5" value="2"></label>
         <button id="btnGeoClear" class="btn ghost">پاک کردن همهٔ لوکیشن‌ها</button>
         <button id="btnGeoStart" class="btn primary" disabled>شروع حالت لوکیشن (GPS + دوربین)</button>
@@ -1000,7 +1000,7 @@ function updateXR(frame) {
       hasHit, pos: state.lastHitPos, up: hitUp, result: hitResult,
       cam: vp ? vp.transform.position : null, frame,
     });
-    reticle.visible = hasHit && geo.seeking;
+    reticle.visible = false;
     return;
   }
 
@@ -1435,7 +1435,7 @@ function updateGyro() {
       pos: state.lastHitPos, up: 1, result: null,
       cam: { x: cp.x, y: cp.y, z: cp.z }, frame: null,
     });
-    reticle.visible = hasHit && geo.seeking;
+    reticle.visible = false;
     return;
   }
 
@@ -1466,6 +1466,7 @@ function updateGyro() {
    در کارت بالا استفاده می‌شود و به صحنهٔ سه‌بعدی وصل نیست. */
 
 const GEO_HOLD_S = 0.7;          // سطح باید این‌قدر ثانیه پایدار بماند تا پیتزا بنشیند
+const GEO_ALIGN_DEG = 40;        // حداکثر اختلاف جهت دوربین با جهت لوکیشن برای نشستن پیتزا
 const GEO_STABLE_M = 0.12;       // حداکثر جابه‌جایی نقطهٔ برخورد در طول این مدت
 const GEO_PLACE_MS = 900;        // مدت انیمیشن فرود
 const GEO_FADE_MS = 800;         // مدت انیمیشن محو شدن
@@ -1655,8 +1656,8 @@ function onGeoPos(p) {
   const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, c.latitude, c.longitude);
   const d = Math.hypot(dE, dN);
   // ناحیهٔ مرده: تکان‌های کوچک GPS (در حد خطای خودش) تقریباً نادیده گرفته می‌شود
-  const dead = Math.max(3, c.accuracy * 0.7);
-  const k = d > 40 ? 1 : d > dead ? 0.3 : 0.1;
+  const dead = Math.max(1.5, c.accuracy * 0.5);
+  const k = d > 40 ? 1 : d > dead ? 0.4 : 0.2;
   geo.pos.lat += (c.latitude - geo.pos.lat) * k;
   geo.pos.lon += (c.longitude - geo.pos.lon) * k;
 }
@@ -1823,6 +1824,11 @@ function geoCreateAnchor(o, probe) {
 }
 
 function geoTrySurface(o, probe, dt) {
+  // قطب‌نما: فقط وقتی دوربین رو به لوکیشن است پیتزا بنشیند (قطب‌نما فقط شرط نشستن است، نه جای پیتزا)
+  if (compass.heading !== null) {
+    const diff = Math.abs(((o.bearing - compass.heading + 540) % 360) - 180);
+    if (diff > GEO_ALIGN_DEG) { o.cand = null; o.candT = 0; geo.surface = 'turn'; return; }
+  }
   let ok = false;
   if (probe.hasHit && probe.pos && probe.cam && probe.up > 0.85) {      // فقط سطح افقی
     const d = Math.hypot(probe.pos.x - probe.cam.x, probe.pos.y - probe.cam.y, probe.pos.z - probe.cam.z);
@@ -1888,7 +1894,7 @@ function updateGeo(probe) {
   const now = performance.now();
   const dt = geo.lastT ? Math.min(0.1, (now - geo.lastT) / 1000) : 0;
   geo.lastT = now;
-  const hyst = Math.min(10, Math.max(2, (geo.accuracy || 10) * 0.5));   // حاشیهٔ امن برابر نویز GPS
+  const hyst = Math.max(0.5, Math.min(10, (geo.accuracy || 10) * 0.5, geo.radius * 0.5));   // حاشیهٔ امن برابر نویز GPS
   const tex = imageMaterial.map;
 
   // ۱) فاصله تا هر لوکیشن (فقط GPS؛ فقط برای تصمیم ورود/خروج)
@@ -1932,6 +1938,7 @@ function updateGeo(probe) {
   // ۴) متن راهنما
   let hint;
   if (!geo.pos) hint = 'در انتظار GPS… بیرون از ساختمان بایستید.';
+  else if (geo.seeking && geo.surface === 'turn') hint = 'به‌سمت لوکیشن پیتزا بچرخید (فلش را دنبال کنید)';
   else if (geo.seeking) hint = geo.surface === 'hold' ? 'سطح پیدا شد؛ گوشی را چند لحظه ثابت نگه دارید…' : 'دوربین را آرام روی زمین یا یک سطح صاف بگیرید تا پیتزا بنشیند';
   else if (geo.objs.some((o) => o.phase === 'placing' || o.phase === 'placed')) hint = 'پیتزا روی سطح ثابت شد؛ می‌توانید دور آن بچرخید.';
   else hint = 'به‌سمت لوکیشن پیتزا بروید…';
@@ -1959,7 +1966,7 @@ function updateGeo(probe) {
   $('geoName').textContent = nearest.loc.name + ' — ' + fmtDist(nearest.dist);
   let detail;
   if (nearest.phase === 'far') detail = 'تا ورود به محدوده حدود ' + fmtDist(Math.max(0, nearest.dist - geo.radius)) + ' مانده.';
-  else if (nearest.phase === 'seeking') detail = 'وارد محدوده شدید؛ دوربین را روی سطح بگیرید.';
+  else if (nearest.phase === 'seeking') detail = 'وارد محدوده شدید؛ رو به لوکیشن بایستید و دوربین را روی سطح بگیرید.';
   else if (nearest.phase === 'fading') detail = 'از محدوده دور شدید؛ پیتزا در حال محو شدن است.';
   else detail = geo.xrMode ? 'پیتزا با AR تثبیت شد ✓ و دیگر به GPS وابسته نیست.' : 'پیتزا ثابت شد ✓ (حالت ساده، فقط چرخش ردیابی می‌شود).';
   if (geo.accuracy !== null) detail += ' · دقت GPS ±' + fa(Math.round(geo.accuracy)) + ' متر';
