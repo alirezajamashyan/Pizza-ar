@@ -386,8 +386,9 @@ html.ar-active, html.ar-active body { background: transparent; }
           <button id="btnGeoHere" class="btn ghost">موقعیت فعلی من</button>
         </div>
         <ul id="geoList" class="geo-list"></ul>
-        <label class="field"><span>شعاع نمایش پیتزا <b id="geoRadiusVal">۳۰ متر</b></span><input id="geoRadius" type="range" min="10" max="300" step="5" value="30"></label>
-        <label class="field"><span>اندازهٔ پیتزا در لوکیشن <b id="geoSizeVal">۲ متر</b></span><input id="geoSize" type="range" min="0.5" max="10" step="0.5" value="2"></label>
+        <label class="field"><span>شعاع نمایش پیتزا <b id="geoRadiusVal">۳۰ متر</b></span><input id="geoRadius" type="range" min="0" max="100" step="1" value="60"></label>
+        <p class="small">دقت GPS معمولاً چند متر است؛ شعاع‌های خیلی کوچک (زیر ۵ متر) ممکن است دیر، نادرست یا اصلاً فعال نشوند. بهتر است شعاع را کمی بزرگ‌تر از «دقت GPS» که بالای صفحه نشان داده می‌شود بگذارید.</p>
+        <label class="field"><span>اندازهٔ پیتزا در لوکیشن <b id="geoSizeVal">۲ متر</b></span><input id="geoSize" type="range" min="0.3" max="10" step="0.1" value="1"></label>
         <button id="btnGeoClear" class="btn ghost">پاک کردن همهٔ لوکیشن‌ها</button>
         <button id="btnGeoStart" class="btn primary" disabled>شروع حالت لوکیشن (GPS + دوربین)</button>
       </section>
@@ -426,6 +427,7 @@ html.ar-active, html.ar-active body { background: transparent; }
         <label class="field">
           <span>حالت نمایش</span>
           <select id="displayMode">
+            <option value="proc">پیتزای سه‌بعدی (ساخته‌شده)</option>
             <option value="billboard">رو به کاربر (ایستاده)</option>
             <option value="flat">خوابیده روی سطح</option>
             <option value="model" disabled>مدل سه‌بعدی GLB</option>
@@ -444,7 +446,7 @@ html.ar-active, html.ar-active body { background: transparent; }
           <input id="fovRange" type="range" min="40" max="90" step="1" value="65">
         </label>
         <label class="field hidden" id="floorField">
-          <span>فاصلهٔ دوربین تا سطح <b id="floorVal">۱۱۰ سانتی‌متر</b></span>
+          <span>ارتفاع گوشی از زمین <b id="floorVal">۱۱۰ سانتی‌متر</b></span>
           <input id="floorRange" type="range" min="30" max="200" step="1" value="110">
         </label>
         <button id="btnReset" class="chip wide">بازنشانی اندازه و چرخش</button>
@@ -506,13 +508,13 @@ const state = {
   scale: 1,
   height: 0,                    // متر
   yaw: 0,                       // رادیان
-  display: 'flat',         // 'billboard' | 'flat' | 'model'
+  display: 'proc',         // 'billboard' | 'flat' | 'model'
   hasModel: false,
   pendingPlace: false,          // درخواست قرار دادن، در فریم بعدی انجام می‌شود
   lastHitPos: null,             // THREE.Vector3 آخرین نقطهٔ برخورد با سطح
   anchorsSupported: false,
   hitTestAvailable: true,       // اگر دستگاه hit-test نداشت، حالت جایگزین فعال می‌شود
-  floorDrop: 1.3,               // فاصلهٔ فرضی دوربین تا سطح (متر) در حالت بدون hit-test
+  floorDrop: 1.5,               // فاصلهٔ فرضی دوربین تا سطح (متر) در حالت بدون hit-test
   lastGestureAt: 0,
 };
 
@@ -616,6 +618,139 @@ pizzaRoot.add(imageMesh);
 const crustMaterial = new THREE.MeshBasicMaterial({ color: 0xb9772c });
 const crustMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 48), crustMaterial);
 pizzaRoot.add(crustMesh);
+
+/* پیتزای سه‌بعدی ساخته‌شده: بافت نمای از بالا (روی بوم) + لبهٔ حلقه‌ای.
+   قطر کل ≈ ۱ واحد؛ با scale به اندازهٔ دلخواه درمی‌آید. روی زمین (y=0) می‌نشیند. */
+function makePizzaTexture() {
+  const S = 1024, R = S / 2;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const inDisc = (minR, maxR) => {
+    const a = rnd() * Math.PI * 2;
+    const r = Math.sqrt(minR * minR + rnd() * (maxR * maxR - minR * minR));
+    return [R + Math.cos(a) * r, R + Math.sin(a) * r, a];
+  };
+
+  g.save();
+  g.beginPath();
+  g.arc(R, R, R - 1, 0, Math.PI * 2);
+  g.clip();
+
+  // سس در لبه ← پنیر در مرکز
+  const base = g.createRadialGradient(R, R, R * 0.1, R, R, R);
+  base.addColorStop(0, '#f3cd6a');
+  base.addColorStop(0.82, '#ebb84c');
+  base.addColorStop(0.93, '#d9702f');
+  base.addColorStop(1, '#b8321f');
+  g.fillStyle = base;
+  g.fillRect(0, 0, S, S);
+
+  // لکه‌های پنیر (روشن و کمی برشته)
+  for (let i = 0; i < 420; i++) {
+    const [x, y] = inDisc(0, R * 0.88);
+    const rr = 14 + rnd() * 34;
+    g.fillStyle = rnd() < 0.6 ? 'rgba(255,238,170,0.35)' : 'rgba(196,128,36,0.22)';
+    g.beginPath();
+    g.ellipse(x, y, rr, rr * (0.6 + rnd() * 0.4), rnd() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // فلفل سبز
+  g.lineCap = 'round';
+  for (let i = 0; i < 34; i++) {
+    const [x, y, a] = inDisc(R * 0.15, R * 0.82);
+    g.beginPath();
+    g.arc(x, y, 26 + rnd() * 14, a, a + 1.3 + rnd() * 0.8);
+    g.strokeStyle = '#3f9a3b'; g.lineWidth = 15; g.stroke();
+    g.strokeStyle = '#6fc45a'; g.lineWidth = 5; g.stroke();
+  }
+
+  // تکه‌های فلفل قرمز
+  for (let i = 0; i < 40; i++) {
+    const [x, y, a] = inDisc(R * 0.1, R * 0.85);
+    g.save(); g.translate(x, y); g.rotate(a);
+    g.fillStyle = '#d8382a'; g.fillRect(-9, -9, 18, 18);
+    g.restore();
+  }
+
+  // قارچ
+  for (let i = 0; i < 20; i++) {
+    const [x, y, a] = inDisc(R * 0.15, R * 0.8);
+    g.save(); g.translate(x, y); g.rotate(a);
+    g.fillStyle = '#d9c4a1';
+    g.beginPath(); g.ellipse(0, 0, 36, 28, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#a98d68';
+    g.beginPath(); g.ellipse(-6, 0, 14, 9, 0, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+
+  // پپرونی
+  for (let i = 0; i < 22; i++) {
+    const [x, y] = inDisc(R * 0.12, R * 0.78);
+    g.fillStyle = '#8e1d14';
+    g.beginPath(); g.arc(x, y, 60, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#b92b1c';
+    g.beginPath(); g.arc(x, y, 54, 0, Math.PI * 2); g.fill();
+    for (let k = 0; k < 7; k++) {
+      const aa = rnd() * Math.PI * 2, rr = rnd() * 40;
+      g.fillStyle = 'rgba(110,20,10,0.55)';
+      g.beginPath(); g.arc(x + Math.cos(aa) * rr, y + Math.sin(aa) * rr, 5 + rnd() * 5, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = 'rgba(255,170,120,0.22)';
+    g.beginPath(); g.arc(x - 16, y - 18, 16, 0, Math.PI * 2); g.fill();
+  }
+
+  // زیتون سیاه
+  for (let i = 0; i < 18; i++) {
+    const [x, y] = inDisc(R * 0.12, R * 0.82);
+    g.fillStyle = '#1a1a17';
+    g.beginPath(); g.arc(x, y, 24, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#d9b24a';
+    g.beginPath(); g.arc(x, y, 10, 0, Math.PI * 2); g.fill();
+  }
+
+  // خط برش ۸ تکه
+  g.strokeStyle = 'rgba(110,60,15,0.5)';
+  g.lineWidth = 5;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    g.beginPath(); g.moveTo(R, R); g.lineTo(R + Math.cos(a) * R, R + Math.sin(a) * R); g.stroke();
+  }
+  g.restore();
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function buildPizzaModel() {
+  const grp = new THREE.Group();
+  const crustMat = new THREE.MeshLambertMaterial({ color: 0xd9a050 });
+
+  const bottom = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.016, 72), crustMat);
+  bottom.position.y = 0.008;
+
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.036, 16, 72).rotateX(Math.PI / 2), crustMat);
+  rim.scale.y = 0.8;
+  rim.position.y = 0.036 * 0.8;
+
+  const top = new THREE.Mesh(
+    new THREE.CircleGeometry(0.44, 72).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: makePizzaTexture() })
+  );
+  top.position.y = 0.018;
+
+  grp.add(bottom, rim, top);
+  return grp;
+}
+
+const procModel = buildPizzaModel();
+pizzaRoot.add(procModel);
+
 let imageAspect = 1379 / 920;   // با بارگذاری تصویر به‌روز می‌شود
 
 /* نگهدارندهٔ مدل GLB */
@@ -626,10 +761,12 @@ pizzaRoot.add(modelHolder);
 function applyDisplayMode() {
   const w = BASE_WIDTH_M;
   const h = BASE_WIDTH_M / imageAspect;
-  const showImage = state.display !== 'model';
+  const showImage = state.display === 'billboard' || state.display === 'flat';
 
   imageMesh.visible = showImage;
-  modelHolder.visible = !showImage && state.hasModel;
+  procModel.visible = state.display === 'proc';
+  procModel.scale.setScalar(w);
+  modelHolder.visible = state.display === 'model' && state.hasModel;
 
   if (state.display === 'flat') {
     // خوابیده روی سطح؛ لبهٔ پایین تصویر به سمت کاربر
@@ -692,7 +829,7 @@ function handleImageFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     setPizzaTexture(reader.result);
-    if (state.display === 'model') state.display = 'billboard';
+    if (state.display === 'model' || state.display === 'proc') state.display = 'billboard';
     applyDisplayMode();
   };
   reader.onerror = () => toast('خواندن تصویر ناموفق بود.');
@@ -1257,7 +1394,11 @@ async function startGyro(withGeo = false) {
   try {
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const motionReq = (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+        ? DeviceMotionEvent.requestPermission().catch(() => 'denied')
+        : Promise.resolve('n/a');
       const r = await DeviceOrientationEvent.requestPermission();
+      await motionReq;
       if (r !== 'granted') {
         toast('دسترسی به حسگر حرکت داده نشد؛ بدون آن پیتزا در جای خود ثابت نمی‌ماند.', 'error', 5000);
         return;
@@ -1293,6 +1434,7 @@ async function startGyro(withGeo = false) {
     window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
   }
   window.addEventListener('deviceorientation', onDeviceOrientation, true);
+  window.addEventListener('devicemotion', onDeviceMotion, true);
   gyro.active = true;
   gyro.got = false;
 
@@ -1328,6 +1470,7 @@ async function startGyro(withGeo = false) {
 function stopGyro() {
   window.removeEventListener('deviceorientation', onDeviceOrientation, true);
   window.removeEventListener('deviceorientationabsolute', onDeviceOrientation, true);
+  window.removeEventListener('devicemotion', onDeviceMotion, true);
   exitGeoMode();
   if (gyro.stream) gyro.stream.getTracks().forEach((t) => t.stop());
   gyro.stream = null;
@@ -1416,12 +1559,49 @@ function updateGyro() {
    محدودیت‌ها: دقت GPS معمولاً چند متر است و قطب‌نما خطا دارد (برای اصلاح، «تصحیح جهت شمال»). */
 
 const geo = {
-  enabled: false, list: [], radius: 30, size: 2,
+  enabled: false, list: [], radius: 20, size: 1,
   watchId: null, pos: null, accuracy: null,
   northOffset: 0, objs: [], lastInfoAt: 0,
-  refGps: null, camX: 0, camZ: 0, following: false, lastT: 0,
+  refGps: null, camX: 0, camZ: 0, following: false, lastT: 0, steps: 0,
 };
 const GEO_KEY = 'pizzaGeoV1';
+
+/* ردیابی گام (Pedometer): شتاب‌سنج گوشی گام‌ها را می‌شمارد و با هر گام، دوربین مجازی حدود
+   ۰٫۷ متر در جهتی که دوربین نگاه می‌کند جلو می‌رود. به این ترتیب پیتزای قفل‌شده با راه رفتن شما
+   نزدیک‌تر/دورتر می‌شود. تقریبی است (طول گام و جهت راه رفتن حدسی است). */
+const _pv = new THREE.Vector3();
+const _stepFwd = new THREE.Vector3();
+const pdr = { g: 9.8, d1: 0, d2: 0, last: 0, above: false, stepLen: 0.7, dir: new THREE.Vector3(0, 0, -1) };
+
+function onDeviceMotion(e) {
+  if (!geo.enabled) return;
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null || a.x === undefined) return;
+  const m = Math.hypot(a.x, a.y, a.z);
+  pdr.g += 0.02 * (m - pdr.g);                       // تخمین آهستهٔ گرانش
+  const dyn = m - pdr.g;
+  const s = (dyn + pdr.d1 + pdr.d2) / 3;             // میانگین ۳ نمونه
+  pdr.d2 = pdr.d1;
+  pdr.d1 = dyn;
+  const now = performance.now();
+  if (s > 1.0 && !pdr.above && now - pdr.last > 350) {
+    pdr.above = true;
+    pdr.last = now;
+    onStep();
+  } else if (s < 0.3) {
+    pdr.above = false;
+  }
+}
+
+function onStep() {
+  _stepFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  _stepFwd.y = 0;
+  if (_stepFwd.lengthSq() > 0.25) pdr.dir.copy(_stepFwd.normalize());   // وقتی خیلی رو به زمین است، جهت قبلی
+  geo.camX += pdr.dir.x * pdr.stepLen;
+  geo.camZ += pdr.dir.z * pdr.stepLen;
+  geo.steps++;
+}
+
 
 function loadGeo() {
   try {
@@ -1508,7 +1688,8 @@ function renderGeoList() {
 function setupGeoUI() {
   loadGeo();
   renderGeoList();
-  $('geoRadius').value = geo.radius;
+  geo.radius = Math.max(1, geo.radius);
+  $('geoRadius').value = Math.round((100 * Math.log(geo.radius)) / Math.log(300));
   $('geoRadiusVal').textContent = fa(geo.radius) + ' متر';
   $('geoSize').value = geo.size;
   $('geoSizeVal').textContent = fa(geo.size) + ' متر';
@@ -1546,7 +1727,8 @@ function setupGeoUI() {
   });
 
   $('geoRadius').addEventListener('input', (e) => {
-    geo.radius = Number(e.target.value);
+    // مقیاس لگاریتمی: از ۱ متر تا ۳۰۰ متر
+    geo.radius = Math.max(1, Math.round(Math.exp((Number(e.target.value) / 100) * Math.log(300))));
     $('geoRadiusVal').textContent = fa(geo.radius) + ' متر';
     saveGeo();
   });
@@ -1586,12 +1768,13 @@ function rebuildGeoObjects() {
     const mesh = new THREE.Mesh(imageMesh.geometry, imageMaterial);
     mesh.rotation.x = -Math.PI / 2;                       // خوابیده روی زمین
     const crust = new THREE.Mesh(crustMesh.geometry, crustMaterial);
+    const proc = procModel.clone();                       // هندسه و بافت مشترک است
     const shadowMat = shadow.material.clone();
     const sh = new THREE.Mesh(shadow.geometry, shadowMat);
     sh.position.y = 0.001;
-    group.add(sh, crust, mesh);
+    group.add(sh, crust, mesh, proc);
     scene.add(group);
-    geo.objs.push({ loc, group, mesh, crust, shadow: sh, shadowMat, dist: Infinity, bearing: 0, yaw: undefined, locked: false, wx: 0, wz: 0 });
+    geo.objs.push({ loc, group, mesh, crust, proc, shadow: sh, shadowMat, dist: Infinity, bearing: 0, yaw: undefined, locked: false, wx: 0, wz: 0 });
   });
 }
 
@@ -1602,6 +1785,7 @@ function enterGeoMode() {
   geo.camZ = 0;
   geo.following = false;
   geo.lastT = 0;
+  geo.steps = 0;
   geo.pos = null;
   geo.accuracy = null;
   state.mode = 'idle';           // در حالت لوکیشن، نشانگر دستی پیش‌فرض خاموش است
@@ -1670,12 +1854,12 @@ function updateGeo() {
     const dx = tx - geo.camX;
     const dz = tz - geo.camZ;
     const dd = Math.hypot(dx, dz);
-    const dead = Math.max(2.5, (geo.accuracy || 10) * 0.6);
+    const dead = Math.max(8, (geo.accuracy || 10) * 1.5);       // GPS فقط خطاهای بزرگ ردیابی گام را اصلاح می‌کند
     if (!geo.following && dd > dead) geo.following = true;
     if (geo.following) {
-      if (dd < 0.5) geo.following = false;
+      if (dd < 1.5) geo.following = false;
       else {
-        const step = Math.min(dd, 2.0 * dt);            // حداکثر ۲ متر بر ثانیه
+        const step = Math.min(dd, 0.4 * dt);            // اصلاح آهسته، حداکثر ۰٫۴ متر بر ثانیه
         geo.camX += (dx / dd) * step;
         geo.camZ += (dz / dd) * step;
       }
@@ -1687,7 +1871,12 @@ function updateGeo() {
         const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, o.loc.lat, o.loc.lon);
         o.dist = Math.hypot(dE, dN);
         o.bearing = (Math.atan2(dE, dN) * 180) / Math.PI;       // ساعت‌گرد از شمال
-        if (o.dist > geo.radius) { o.group.visible = false; return; }
+        o.inRange = o.dist <= geo.radius;
+        if (!o.inRange) { o.group.visible = false; return; }
+        // فقط وقتی «اولین بار در دید دوربین» قرار گرفت قفل می‌شود
+        _pv.set(geo.camX + dE, 0, geo.camZ - dN).project(camera);
+        const inView = _pv.z > -1 && _pv.z < 1 && Math.abs(_pv.x) < 0.95 && Math.abs(_pv.y) < 0.95;
+        if (!inView) { o.group.visible = false; return; }
         o.locked = true;
         o.wx = geo.camX + dE;                                    // شرق = +X
         o.wz = geo.camZ - dN;                                    // شمال = −Z
@@ -1698,7 +1887,7 @@ function updateGeo() {
         const ddz = o.wz - geo.camZ;
         o.dist = Math.hypot(ddx, ddz);
         o.bearing = (Math.atan2(ddx, -ddz) * 180) / Math.PI;
-        if (o.dist > geo.radius * 2.5) {                         // خیلی دور شدید؛ قفل را رها کن تا دوباره با GPS تازه قفل شود
+        if (o.dist > Math.max(geo.radius * 3, 12)) {                         // خیلی دور شدید؛ قفل را رها کن تا دوباره با GPS تازه قفل شود
           o.locked = false;
           o.group.visible = false;
           return;
@@ -1706,13 +1895,21 @@ function updateGeo() {
       }
 
       const w = geo.size;
-      const thick = Math.max(0.02, w * 0.045);                   // لبهٔ کم‌ضخامت: پیتزا چسبیده به زمین
+      const useProc = state.display === 'proc' || state.display === 'model';
       o.group.position.set(o.wx, 0, o.wz);
       o.group.rotation.y = o.yaw;
-      o.mesh.scale.set(w, w, 1);                                 // دایره (عمق = عرض)
-      o.mesh.position.y = thick + 0.003;
-      o.crust.scale.set(w * 0.94, thick, w * 0.94);
-      o.crust.position.y = thick / 2;
+      o.proc.visible = useProc;
+      o.mesh.visible = !useProc;
+      o.crust.visible = !useProc;
+      if (useProc) {
+        o.proc.scale.setScalar(w);                               // پیتزای سه‌بعدی، چسبیده به زمین
+      } else {
+        const thick = Math.max(0.02, w * 0.045);
+        o.mesh.scale.set(w, w, 1);                               // عکس شما، خوابیده
+        o.mesh.position.y = thick + 0.003;
+        o.crust.scale.set(w * 0.94, thick, w * 0.94);
+        o.crust.position.y = thick / 2;
+      }
       o.shadow.scale.set(w * 1.12, w * 1.12, 1);
       o.group.visible = true;
     });
@@ -1735,9 +1932,12 @@ function updateGeo() {
   $('geoArrow').style.transform = 'rotate(' + (nearest.bearing - heading).toFixed(0) + 'deg)';
   $('geoName').textContent = nearest.loc.name + ' — ' + fmtDist(nearest.dist);
   let detail = nearest.locked
-    ? 'پیتزا قفل شد ✓ و ثابت است؛ اطراف را نگاه کنید.'
-    : 'تا ' + fmtDist(geo.radius) + ' نزدیک شوید تا پیتزا خودکار قفل شود.';
+    ? 'پیتزا قفل شد ✓ و ثابت است؛ با راه رفتن نزدیک یا دور می‌شود.'
+    : nearest.inRange
+      ? 'نزدیک است؛ دوربین را به‌سمت فلش و کمی رو به زمین بگیرید تا دیده شود و قفل شود.'
+      : 'تا ' + fmtDist(geo.radius) + ' نزدیک شوید.';
   if (geo.accuracy !== null) detail += ' · دقت GPS ±' + fa(Math.round(geo.accuracy)) + ' متر';
+  detail += ' · گام‌ها: ' + fa(geo.steps);
   if (!gyro.northKnown) detail += ' · قطب‌نما نامشخص (جهت‌ها تقریبی‌اند)';
   $('geoDetail').textContent = detail;
 }
