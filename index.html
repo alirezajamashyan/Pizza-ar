@@ -392,7 +392,7 @@ html.ar-active, html.ar-active body { background: transparent; }
         <button id="btnGeoStart" class="btn primary" disabled>شروع حالت لوکیشن (GPS + دوربین)</button>
       </section>
 
-      <p class="small note">حالت لوکیشن به GPS و قطب‌نمای گوشی وابسته است: دقت GPS معمولاً چند متر و گاهی بیشتر است و قطب‌نما ممکن است خطا داشته باشد، پس پیتزا «تقریباً» در جای مختصات دیده می‌شود، نه با دقت سانتی‌متری. GPS به‌تنهایی پیتزا را روی میز ثابت نگه نمی‌دارد.</p>
+      <p class="small note">در حالت لوکیشن، GPS فقط برای فهمیدن «ورود به محدوده» استفاده می‌شود (دقت آن چند متر است). بعد از ورود، دوربین را آرام روی زمین یا یک سطح صاف بگیرید؛ پیتزا خودکار روی سطح می‌نشیند، با AR Anchor ثابت می‌شود و از آن به بعد GPS و قطب‌نما روی جای آن اثری ندارند. با دور شدن از محدوده، پیتزا محو می‌شود. اگر مرورگر WebXR نداشته باشد، «حالت ساده» (فقط ردیابی چرخشی، بدون Anchor) جایگزین می‌شود.</p>
     </main>
 
     <!-- ───── رابط داخل AR ───── -->
@@ -435,10 +435,6 @@ html.ar-active, html.ar-active body { background: transparent; }
           <span>سرعت واکنش حسگر <b id="smoothVal">۱۲٪</b></span>
           <input id="smoothRange" type="range" min="5" max="100" step="1" value="12">
         </label>
-        <label class="field hidden" id="northField">
-          <span>تصحیح جهت شمال <b id="northVal">۰°</b></span>
-          <input id="northRange" type="range" min="-180" max="180" step="1" value="0">
-        </label>
         <label class="field hidden" id="fovField">
           <span>زاویهٔ دید دوربین <b id="fovVal">۶۵°</b></span>
           <input id="fovRange" type="range" min="40" max="90" step="1" value="65">
@@ -450,7 +446,7 @@ html.ar-active, html.ar-active body { background: transparent; }
         <button id="btnReset" class="chip wide">بازنشانی اندازه و چرخش</button>
       </div>
 
-      <nav class="toolbar ui">
+      <nav id="toolbar" class="toolbar ui">
         <button id="btnPlace" class="tool"><i>⬇</i><span>قرار دادن</span></button>
         <button id="btnMove" class="tool"><i>✥</i><span>جابجایی</span></button>
         <button id="btnSize" class="tool"><i>⤢</i><span>اندازه</span></button>
@@ -522,6 +518,7 @@ let viewerSpace = null;
 let refSpace = null;
 let anchor = null;              // XRAnchor فعلی
 let anchorToken = 0;            // برای نادیده گرفتن پاسخ‌های قدیمی createAnchor
+let xrSupported = false;        // آیا immersive-ar پشتیبانی می‌شود؟
 
 /* ───────────── ۲. ابزارهای کمکی ───────────── */
 
@@ -795,7 +792,7 @@ async function setupQuickLook() {
 
 /* ───────────── ۶. جلسهٔ AR ───────────── */
 
-async function startAR() {
+async function startAR(withGeo = false) {
   try {
     try {
       // تلاش اول: با hit-test اجباری (تشخیص واقعی سطح)
@@ -821,7 +818,7 @@ async function startAR() {
     } else {
       toast('شروع واقعیت افزوده ناموفق بود: ' + (err && err.message ? err.message : 'خطای ناشناخته'), 'error', 5000);
     }
-    return;
+    return false;
   }
 
   try {
@@ -842,7 +839,7 @@ async function startAR() {
   } catch (err) {
     toast('راه‌اندازی ردیابی سطح ناموفق بود.', 'error', 4000);
     session.end().catch(() => {});
-    return;
+    return false;
   }
 
   state.anchorsSupported = Array.isArray(session.enabledFeatures)
@@ -862,14 +859,18 @@ async function startAR() {
   $('floorField').classList.toggle('hidden', !!hitTestSource);
   syncUI();
 
+  if (withGeo) { enterGeoMode(); return true; }
+
   if (!hitTestSource) {
     toast('این دستگاه تشخیص سطح (hit-test) ندارد. نشانگر حدود ۱ متر جلوی شماست و پیتزا با ردیابی حرکت گوشی در دنیا ثابت می‌ماند، ولی سطح را تشخیص نمی‌دهد. از «اندازه» فاصلهٔ دوربین تا میز/زمین را تنظیم کنید.', 'info', 9000);
   } else if (!state.anchorsSupported) {
     toast('Anchor در این مرورگر فعال نیست؛ پیتزا با ردیابی استاندارد جلسه ثابت می‌ماند و با قطع ردیابی ممکن است کمی جابجا شود.', 'info', 5000);
   }
+  return true;
 }
 
 function onSessionEnd() {
+  exitGeoMode();
   if (hitTestSource) { hitTestSource.cancel(); hitTestSource = null; }
   if (anchor) { anchor.delete(); anchor = null; }
   viewerSpace = null;
@@ -890,6 +891,7 @@ function onSessionEnd() {
 
 /** رویداد ضربه روی صفحه (یا لمس دسته). فقط درخواست قرار دادن را ثبت می‌کنیم؛ کار اصلی در فریم بعدی انجام می‌شود. */
 function onSelect() {
+  if (geo.enabled) return;                       // در حالت لوکیشن، قرارگیری خودکار است
   if (performance.now() - state.lastGestureAt < GESTURE_GRACE_MS) return; // پایان pinch/کشیدن، ضربه نیست
   if (state.mode === 'idle') return;
   state.pendingPlace = true;
@@ -935,11 +937,16 @@ const _camPos = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _lastFwd = new THREE.Vector3(0, 0, -1);
 const _q = new THREE.Quaternion();
+const _up = new THREE.Vector3();
 let lastHint = '';
 
 function updateXR(frame) {
-  // ۱) نتیجهٔ hit-test و نشانگر
+  const vp = frame.getViewerPose(refSpace);
+
+  // ۱) نتیجهٔ hit-test (مرکز تصویر دوربین)
   let hasHit = false;
+  let hitResult = null;
+  let hitUp = 1;
   if (hitTestSource) {
     const results = frame.getHitTestResults(hitTestSource);
     if (results.length) {
@@ -948,16 +955,30 @@ function updateXR(frame) {
         _m.fromArray(pose.transform.matrix);
         reticle.matrix.copy(_m);
         state.lastHitPos = new THREE.Vector3().setFromMatrixPosition(_m);
+        const o = pose.transform.orientation;
+        // محور Y نقطهٔ برخورد = عمود سطح؛ برای پیتزای لوکیشن فقط سطح افقی قبول می‌شود
+        hitUp = _up.set(0, 1, 0).applyQuaternion(_q.set(o.x, o.y, o.z, o.w)).y;
+        hitResult = results[0];
         hasHit = true;
       }
     }
-  }
-  // حالت جایگزین بدون hit-test: نقطه‌ای ۱ متر جلوی دید، به‌اندازهٔ floorDrop پایین‌تر از دوربین
-  if (!hitTestSource) {
-    const vp = frame.getViewerPose(refSpace);
-    if (vp) {
-      const p = vp.transform.position;
-      const o = vp.transform.orientation;
+  } else if (vp) {
+    const p = vp.transform.position;
+    const o = vp.transform.orientation;
+    if (geo.enabled) {
+      // بدون hit-test: برخورد پرتوی مرکز دید با «زمین فرضی» در فاصلهٔ floorDrop زیر دوربین
+      _fwd.set(0, 0, -1).applyQuaternion(_q.set(o.x, o.y, o.z, o.w));
+      if (_fwd.y < -0.2) {
+        const t = state.floorDrop / -_fwd.y;
+        if (t <= 8) {
+          const pos = new THREE.Vector3(p.x + _fwd.x * t, p.y - state.floorDrop, p.z + _fwd.z * t);
+          reticle.matrix.makeTranslation(pos.x, pos.y, pos.z);
+          state.lastHitPos = pos;
+          hasHit = true;
+        }
+      }
+    } else {
+      // حالت جایگزین بدون hit-test: نقطه‌ای ۱ متر جلوی دید، به‌اندازهٔ floorDrop پایین‌تر از دوربین
       _fwd.set(0, 0, -1).applyQuaternion(_q.set(o.x, o.y, o.z, o.w));
       _fwd.y = 0;
       if (_fwd.lengthSq() > 1e-3) _lastFwd.copy(_fwd.normalize());
@@ -972,6 +993,18 @@ function updateXR(frame) {
     }
   }
   if (!hasHit) state.lastHitPos = null;
+
+  // ── حالت لوکیشن: GPS فقط محدوده را تعیین می‌کند؛ جای پیتزا را AR (hit-test + anchor) می‌دهد ──
+  if (geo.enabled) {
+    updateGeo({
+      hasHit, pos: state.lastHitPos, up: hitUp, result: hitResult,
+      cam: vp ? vp.transform.position : null, frame,
+    });
+    reticle.visible = hasHit && geo.seeking;
+    return;
+  }
+
+  // ── حالت عادی AR (بدون تغییر) ──
   reticle.visible = hasHit && state.mode !== 'idle';
 
   // ۲) درخواست قرار دادن (ضربه یا دکمه)
@@ -1236,7 +1269,7 @@ function onDeviceOrientation(e) {
   gyro.gamma = e.gamma || 0;
 
   // iOS: webkitCompassHeading شمال را می‌دهد؛ آلفا را با آن هم‌تراز می‌کنیم
-  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
+  if (!gyro.noCompass && typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
     const target = 360 - e.webkitCompassHeading;
     if (!gyro.compassInit) {
       gyro.alphaOffset = target - e.alpha;
@@ -1284,12 +1317,13 @@ async function startGyro(withGeo = false) {
   try { await v.play(); } catch (err) { /* autoplay خودکار است */ }
   v.classList.remove('hidden');
 
+  gyro.noCompass = withGeo;      // در حالت لوکیشن، قطب‌نما روی دوربین/پیتزا اثر نمی‌گذارد
   gyro.absSeen = false;
   gyro.hasQ = false;
   gyro.northKnown = false;
   gyro.compassInit = false;
   gyro.alphaOffset = 0;
-  if ('ondeviceorientationabsolute' in window) {
+  if (!withGeo && 'ondeviceorientationabsolute' in window) {
     window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
   }
   window.addEventListener('deviceorientation', onDeviceOrientation, true);
@@ -1362,7 +1396,7 @@ function updateGyro() {
   if (gyro.got) {
     const d = THREE.MathUtils.degToRad;
     const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-    _euler.set(d(gyro.beta), d(gyro.alpha + gyro.alphaOffset + geo.northOffset), -d(gyro.gamma), 'YXZ');
+    _euler.set(d(gyro.beta), d(gyro.alpha + gyro.alphaOffset), -d(gyro.gamma), 'YXZ');
     _tq.setFromEuler(_euler);
     _tq.multiply(_gq1);
     _tq.multiply(_gq0.setFromAxisAngle(_zee, -d(orient)));
@@ -1374,7 +1408,7 @@ function updateGyro() {
       if (ang > 0.0017) camera.quaternion.slerp(_tq, Math.min(0.8, gyro.smooth * 0.5 + ang * 4));
     }
   }
-  camera.position.set(geo.enabled ? geo.camX : 0, state.floorDrop, geo.enabled ? geo.camZ : 0);
+  camera.position.set(0, state.floorDrop, 0);          // GPS هرگز دوربین را جابه‌جا نمی‌کند
   camera.updateMatrixWorld(true);
 
   // نشانگر: نقطهٔ برخورد پرتوی مرکز صفحه با «زمین فرضی» (y = 0)
@@ -1392,14 +1426,25 @@ function updateGyro() {
     }
   }
   if (!hasHit) state.lastHitPos = null;
+
+  if (geo.enabled) {
+    const cp = camera.position;
+    const hitDist = hasHit ? state.lastHitPos.distanceTo(cp) : 0;
+    updateGeo({
+      hasHit: hasHit && dir.y < -0.2 && hitDist <= 8,
+      pos: state.lastHitPos, up: 1, result: null,
+      cam: { x: cp.x, y: cp.y, z: cp.z }, frame: null,
+    });
+    reticle.visible = hasHit && geo.seeking;
+    return;
+  }
+
   reticle.visible = hasHit && state.mode !== 'idle';
 
   if (state.pendingPlace) {
     state.pendingPlace = false;
     placeAtLastHit(null);
   }
-
-  if (geo.enabled) updateGeo();
 
   let hint;
   if (state.mode === 'idle') hint = 'یک انگشت: چرخش · دو انگشت: اندازه';
@@ -1408,18 +1453,29 @@ function updateGyro() {
   if (hint !== lastHint) { $('hint').textContent = hint; lastHint = hint; }
 }
 
-/* ───────────── لوکیشن‌های پیتزا (GPS + قطب‌نما) ─────────────
-   دستگاه مختصات شما را با GPS می‌گیرد و هر لوکیشن لیست را نسبت به شما به متر
-   (شرق/شمال) تبدیل می‌کند. دنیای سه‌بعدی چنین چیده می‌شود: شمال = محور −Z، شرق = محور +X
-   و شما در مبدأ هستید. وقتی تا «شعاع نمایش» به یک لوکیشن نزدیک شوید، پیتزا در همان
-   جهت و فاصله دیده می‌شود.
-   محدودیت‌ها: دقت GPS معمولاً چند متر است و قطب‌نما خطا دارد (برای اصلاح، «تصحیح جهت شمال»). */
+/* ───────────── لوکیشن‌های پیتزا (GPS فقط برای «محدوده») ─────────────
+   جریان کار هر پیتزا:
+     far      ← خارج از محدوده؛ نمایش داده نمی‌شود.
+     seeking  ← GPS می‌گوید وارد شعاع شدید؛ پرتوی مرکز دوربین (hit-test) سطح افقی را
+                جست‌وجو می‌کند. وقتی سطح چند لحظه پایدار ماند، خودکار انتخاب می‌شود.
+     placing  ← پیتزا با انیمیشن فرود روی سطح می‌نشیند و یک AR Anchor ساخته می‌شود.
+     placed   ← از این‌جا فقط AR (anchor/ردیابی جلسه) جای پیتزا را نگه می‌دارد.
+                GPS و قطب‌نما هیچ اثری روی موقعیت و جهت آن ندارند.
+     fading   ← با دور شدن بیش از شعاع، پیتزا با انیمیشن محو و anchor آزاد می‌شود.
+   GPS فقط برای «ورود/خروج از محدوده» خوانده می‌شود. قطب‌نما فقط برای فلش راهنما
+   در کارت بالا استفاده می‌شود و به صحنهٔ سه‌بعدی وصل نیست. */
+
+const GEO_HOLD_S = 0.7;          // سطح باید این‌قدر ثانیه پایدار بماند تا پیتزا بنشیند
+const GEO_STABLE_M = 0.12;       // حداکثر جابه‌جایی نقطهٔ برخورد در طول این مدت
+const GEO_PLACE_MS = 900;        // مدت انیمیشن فرود
+const GEO_FADE_MS = 800;         // مدت انیمیشن محو شدن
+const GEO_LEAVE_HOLD_S = 1.5;    // برای جلوگیری از پرش‌های لحظه‌ای GPS: این‌قدر ثانیه بیرون از محدوده بمانید
 
 const geo = {
   enabled: false, list: [], radius: 30, size: 2,
   watchId: null, pos: null, accuracy: null,
-  northOffset: 0, objs: [], lastInfoAt: 0,
-  refGps: null, camX: 0, camZ: 0, following: false, lastT: 0,
+  objs: [], lastInfoAt: 0, lastT: 0,
+  seeking: false, surface: 'search', xrMode: false,
 };
 const GEO_KEY = 'pizzaGeoV1';
 
@@ -1556,14 +1612,13 @@ function setupGeoUI() {
     saveGeo();
   });
 
-  $('btnGeoStart').addEventListener('click', () => {
+  $('btnGeoStart').addEventListener('click', async () => {
     if (!geo.list.length) { toast('اول حداقل یک لوکیشن به لیست اضافه کنید.'); return; }
-    startGyro(true);
-  });
-
-  $('northRange').addEventListener('input', (e) => {
-    geo.northOffset = Number(e.target.value);
-    $('northVal').textContent = fa(geo.northOffset) + '°';
+    beginGeoWatch();                       // مجوز GPS قبل از ورود به جلسهٔ AR پرسیده شود
+    let ok = false;
+    if (xrSupported) ok = await startAR(true);          // اولویت: AR واقعی (hit-test + anchor)
+    if (!ok && !session) await startGyro(true);         // جایگزین: حالت ساده (فقط چرخش)
+    if (!session && !gyro.active) endGeoWatch();
   });
 }
 
@@ -1577,71 +1632,31 @@ function enuOffset(lat0, lon0, lat1, lon1) {
   };
 }
 
-function rebuildGeoObjects() {
-  geo.objs.forEach((o) => { scene.remove(o.group); o.shadowMat.dispose(); });
-  geo.objs = [];
-  geo.list.forEach((loc) => {
-    const group = new THREE.Group();
-    group.visible = false;
-    const mesh = new THREE.Mesh(imageMesh.geometry, imageMaterial);
-    mesh.rotation.x = -Math.PI / 2;                       // خوابیده روی زمین
-    const crust = new THREE.Mesh(crustMesh.geometry, crustMaterial);
-    const shadowMat = shadow.material.clone();
-    const sh = new THREE.Mesh(shadow.geometry, shadowMat);
-    sh.position.y = 0.001;
-    group.add(sh, crust, mesh);
-    scene.add(group);
-    geo.objs.push({ loc, group, mesh, crust, shadow: sh, shadowMat, dist: Infinity, bearing: 0, yaw: undefined, locked: false, wx: 0, wz: 0 });
-  });
-}
+/* ── GPS: فقط برای تشخیص نزدیک/دور شدن ── */
 
-function enterGeoMode() {
-  geo.enabled = true;
-  geo.refGps = null;
-  geo.camX = 0;
-  geo.camZ = 0;
-  geo.following = false;
-  geo.lastT = 0;
+function beginGeoWatch() {
+  if (!('geolocation' in navigator)) { toast('این مرورگر از GPS پشتیبانی نمی‌کند.'); return; }
+  if (geo.watchId !== null) return;
   geo.pos = null;
   geo.accuracy = null;
-  state.mode = 'idle';           // در حالت لوکیشن، نشانگر دستی پیش‌فرض خاموش است
-  syncUI();
-  rebuildGeoObjects();
-  $('geoInfo').classList.remove('hidden');
-  $('northField').classList.remove('hidden');
-
-  if (!('geolocation' in navigator)) {
-    toast('این مرورگر از GPS پشتیبانی نمی‌کند.');
-    return;
-  }
   geo.watchId = navigator.geolocation.watchPosition(onGeoPos, onGeoErr, {
     enableHighAccuracy: true, maximumAge: 1000, timeout: 20000,
   });
-  toast('حالت لوکیشن فعال شد. به‌سمت لوکیشن حرکت کنید؛ وقتی وارد شعاع شدید، پیتزا خودکار روی زمین قفل می‌شود. اگر جهتش اشتباه بود، «تصحیح جهت شمال» را تنظیم کنید.', 'info', 9000);
 }
 
-function exitGeoMode() {
+function endGeoWatch() {
   if (geo.watchId !== null) { navigator.geolocation.clearWatch(geo.watchId); geo.watchId = null; }
-  geo.enabled = false;
-  geo.objs.forEach((o) => { scene.remove(o.group); o.shadowMat.dispose(); });
-  geo.objs = [];
-  $('geoInfo').classList.add('hidden');
-  $('northField').classList.add('hidden');
 }
 
 function onGeoPos(p) {
   const c = p.coords;
   geo.accuracy = c.accuracy;
-  if (!geo.pos) {
-    geo.pos = { lat: c.latitude, lon: c.longitude };
-    geo.refGps = { lat: c.latitude, lon: c.longitude };   // مبدأ دنیای سه‌بعدی
-    return;
-  }
+  if (!geo.pos) { geo.pos = { lat: c.latitude, lon: c.longitude }; return; }
   const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, c.latitude, c.longitude);
   const d = Math.hypot(dE, dN);
   // ناحیهٔ مرده: تکان‌های کوچک GPS (در حد خطای خودش) تقریباً نادیده گرفته می‌شود
   const dead = Math.max(3, c.accuracy * 0.7);
-  const k = d > 40 ? 1 : d > dead ? 0.15 : 0.02;
+  const k = d > 40 ? 1 : d > dead ? 0.3 : 0.1;
   geo.pos.lat += (c.latitude - geo.pos.lat) * k;
   geo.pos.lon += (c.longitude - geo.pos.lon) * k;
 }
@@ -1654,74 +1669,277 @@ function onGeoErr(err) {
 
 const fmtDist = (m) => (m < 1000 ? fa(Math.round(m)) + ' متر' : fa(Number((m / 1000).toFixed(1))) + ' کیلومتر');
 
-function updateGeo() {
-  if (!geo.pos || !geo.refGps) {
-    geo.objs.forEach((o) => { o.group.visible = false; });
-  } else {
-    const now = performance.now();
-    const dt = geo.lastT ? Math.min(0.1, (now - geo.lastT) / 1000) : 0;
-    geo.lastT = now;
+/* ── قطب‌نما: فقط برای فلش راهنمای کارت بالا (به صحنه وصل نیست) ── */
 
-    // ۱) دوربین مجازی، حرکت شما را از GPS دنبال می‌کند؛ ولی فقط وقتی جابجایی از نویز بزرگ‌تر باشد
-    //    و با سرعت محدود (تا نوسان GPS پیتزای قفل‌شده را نلرزاند).
-    const r = enuOffset(geo.refGps.lat, geo.refGps.lon, geo.pos.lat, geo.pos.lon);
-    const tx = r.dE;
-    const tz = -r.dN;
-    const dx = tx - geo.camX;
-    const dz = tz - geo.camZ;
-    const dd = Math.hypot(dx, dz);
-    const dead = Math.max(2.5, (geo.accuracy || 10) * 0.6);
-    if (!geo.following && dd > dead) geo.following = true;
-    if (geo.following) {
-      if (dd < 0.5) geo.following = false;
-      else {
-        const step = Math.min(dd, 2.0 * dt);            // حداکثر ۲ متر بر ثانیه
-        geo.camX += (dx / dd) * step;
-        geo.camZ += (dz / dd) * step;
-      }
-    }
+const compass = { heading: null, active: false };
 
-    // ۲) هر پیتزا: وقتی وارد شعاع شد، خودکار در دنیا «قفل» می‌شود و دیگر با GPS جابجا نمی‌شود
+function tiltCompensatedHeading(alpha, beta, gamma) {
+  const d = Math.PI / 180;
+  const x = beta * d, y = gamma * d, z = alpha * d;
+  const cY = Math.cos(y), cZ = Math.cos(z), sX = Math.sin(x), sY = Math.sin(y), sZ = Math.sin(z);
+  const vx = -cZ * sY - sZ * sX * cY;
+  const vy = -sZ * sY + cZ * sX * cY;
+  let h = Math.atan(vx / vy);
+  if (vy < 0) h += Math.PI; else if (vx < 0) h += 2 * Math.PI;
+  return (h * 180) / Math.PI;
+}
+
+function onCompassUI(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) h = e.webkitCompassHeading;
+  else if (e.type === 'deviceorientationabsolute' && e.alpha !== null && e.beta !== null) {
+    h = tiltCompensatedHeading(e.alpha, e.beta, e.gamma || 0);
+  }
+  if (h === null || !isFinite(h)) return;
+  if (compass.heading === null) compass.heading = h;
+  else {
+    const diff = ((h - compass.heading + 540) % 360) - 180;
+    compass.heading = (compass.heading + diff * 0.2 + 360) % 360;
+  }
+}
+
+function startCompassUI() {
+  if (compass.active) return;
+  compass.active = true;
+  compass.heading = null;
+  if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onCompassUI, true);
+  window.addEventListener('deviceorientation', onCompassUI, true);
+}
+
+function stopCompassUI() {
+  window.removeEventListener('deviceorientationabsolute', onCompassUI, true);
+  window.removeEventListener('deviceorientation', onCompassUI, true);
+  compass.active = false;
+}
+
+/* ── اشیای پیتزا ── */
+
+function geoLayout(o) {
+  const w = geo.size;
+  const thick = Math.max(0.02, w * 0.045);                  // لبهٔ کم‌ضخامت: پیتزا چسبیده به سطح
+  o.mesh.scale.set(w, w, 1);
+  o.mesh.position.y = thick + 0.003;
+  o.crust.scale.set(w * 0.94, thick, w * 0.94);
+  o.crust.position.y = thick / 2;
+  o.shadow.scale.set(w * 1.12, w * 1.12, 1);
+}
+
+function makeGeoObject(loc) {
+  const group = new THREE.Group();
+  group.visible = false;
+  // متریال‌های جدا برای هر پیتزا تا محو شدن هرکدام مستقل باشد (بافت مشترک است)
+  const imgMat = imageMaterial.clone();
+  imgMat.transparent = true;
+  const mesh = new THREE.Mesh(imageMesh.geometry, imgMat);
+  mesh.rotation.x = -Math.PI / 2;                           // خوابیده روی سطح
+  const crustMat = crustMaterial.clone();
+  crustMat.transparent = true;
+  const crust = new THREE.Mesh(crustMesh.geometry, crustMat);
+  const shadowMat = shadow.material.clone();
+  const sh = new THREE.Mesh(shadow.geometry, shadowMat);
+  sh.position.y = 0.001;
+  group.add(sh, crust, mesh);
+  scene.add(group);
+  const o = {
+    loc, group, mesh, crust, shadow: sh, imgMat, crustMat, shadowMat,
+    phase: 'far', dist: Infinity, bearing: 0,
+    pos: new THREE.Vector3(), yaw: 0,
+    cand: null, candT: 0, farT: 0, t0: 0,
+    anchor: null, anchorToken: 0,
+  };
+  geoLayout(o);
+  return o;
+}
+
+function geoReleaseAnchor(o) {
+  o.anchorToken++;
+  if (o.anchor) { try { o.anchor.delete(); } catch (e) { /* ignore */ } o.anchor = null; }
+}
+
+function disposeGeoObject(o) {
+  geoReleaseAnchor(o);
+  scene.remove(o.group);
+  o.imgMat.dispose();
+  o.crustMat.dispose();
+  o.shadowMat.dispose();
+}
+
+function rebuildGeoObjects() {
+  geo.objs.forEach(disposeGeoObject);
+  geo.objs = geo.list.map(makeGeoObject);
+}
+
+function enterGeoMode() {
+  geo.enabled = true;
+  geo.xrMode = !!session;
+  geo.lastT = 0;
+  geo.seeking = false;
+  geo.surface = 'search';
+  state.mode = 'idle';                  // قرار دادن دستی غیرفعال؛ همه‌چیز خودکار است
+  state.placed = false;
+  rebuildGeoObjects();
+  syncUI();
+  $('geoInfo').classList.remove('hidden');
+  $('toolbar').classList.add('hidden');
+  $('sizePanel').classList.add('hidden');
+  startCompassUI();
+
+  let msg = 'حالت لوکیشن فعال شد. وقتی وارد محدوده شدید، دوربین را آرام روی زمین یا یک سطح صاف بگیرید؛ پیتزا خودکار می‌نشیند و ثابت می‌ماند.';
+  if (session && !hitTestSource) msg += ' (این دستگاه سطح‌یاب ندارد؛ زمین با فاصلهٔ فرضی تخمین زده می‌شود.)';
+  if (!session) msg += ' (حالت ساده: فقط چرخش ردیابی می‌شود و Anchor ندارد؛ با قدم زدن ممکن است پیتزا بلغزد.)';
+  toast(msg, 'info', 9000);
+}
+
+function exitGeoMode() {
+  endGeoWatch();
+  stopCompassUI();
+  geo.objs.forEach(disposeGeoObject);
+  geo.objs = [];
+  geo.seeking = false;
+  if (geo.enabled) {
+    geo.enabled = false;
+    $('geoInfo').classList.add('hidden');
+    $('toolbar').classList.remove('hidden');
+  }
+}
+
+/* ── قرارگیری خودکار روی سطح + Anchor ── */
+
+function geoCreateAnchor(o, probe) {
+  if (!state.anchorsSupported || !session) return;
+  const token = ++o.anchorToken;
+  const accept = (a) => {
+    if (token !== o.anchorToken || !session) { a.delete(); return; }
+    if (o.anchor) o.anchor.delete();
+    o.anchor = a;
+  };
+  let p = null;
+  // بهترین حالت: anchor مستقیم روی نتیجهٔ hit-test (چسبیده به صفحهٔ واقعی)
+  if (probe.result && typeof probe.result.createAnchor === 'function') p = probe.result.createAnchor();
+  else if (probe.frame && probe.frame.createAnchor) {
+    p = probe.frame.createAnchor(new XRRigidTransform({ x: o.pos.x, y: o.pos.y, z: o.pos.z }), refSpace);
+  }
+  if (p) p.then(accept).catch(() => { /* ادامه با ردیابی استاندارد جلسه */ });
+}
+
+function geoTrySurface(o, probe, dt) {
+  let ok = false;
+  if (probe.hasHit && probe.pos && probe.cam && probe.up > 0.85) {      // فقط سطح افقی
+    const d = Math.hypot(probe.pos.x - probe.cam.x, probe.pos.y - probe.cam.y, probe.pos.z - probe.cam.z);
+    ok = d >= 0.4 && d <= 8;
+  }
+  if (!ok) { o.cand = null; o.candT = 0; geo.surface = 'search'; return; }
+
+  geo.surface = 'hold';
+  if (!o.cand || o.cand.distanceTo(probe.pos) > GEO_STABLE_M) { o.cand = probe.pos.clone(); o.candT = 0; }
+  else o.candT += dt;
+  if (o.candT >= GEO_HOLD_S) geoPlace(o, probe);
+}
+
+function geoPlace(o, probe) {
+  o.pos.copy(probe.pos);
+  o.yaw = Math.atan2(probe.cam.x - o.pos.x, probe.cam.z - o.pos.z);   // فقط همین یک بار رو به کاربر؛ بعد از آن ثابت
+  o.group.rotation.y = o.yaw;
+  o.phase = 'placing';
+  o.t0 = performance.now();
+  o.farT = 0;
+  geoCreateAnchor(o, probe);
+  toast('پیتزای «' + o.loc.name + '» روی سطح نشست.', 'info', 2500);
+}
+
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutBack = (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+
+function geoAnimate(o, probe, now) {
+  if (o.phase === 'far' || o.phase === 'seeking') { o.group.visible = false; return; }
+
+  // موقعیت فقط از Anchor (AR) به‌روز می‌شود، نه از GPS یا قطب‌نما
+  if (o.anchor && probe.frame && probe.frame.trackedAnchors && probe.frame.trackedAnchors.has(o.anchor)) {
+    const pose = probe.frame.getPose(o.anchor.anchorSpace, refSpace);
+    if (pose) o.pos.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+  }
+
+  let alpha = 1, scale = 1, lift = 0;
+  if (o.phase === 'placing') {
+    const t = Math.min(1, (now - o.t0) / GEO_PLACE_MS);
+    alpha = Math.min(1, t * 3);
+    scale = 0.55 + 0.45 * easeOutBack(t);
+    lift = 0.45 * (1 - easeOutCubic(t));               // فرود از ۴۵ سانتی‌متر بالاتر
+    if (t >= 1) o.phase = 'placed';
+  } else if (o.phase === 'fading') {
+    const t = Math.min(1, (now - o.t0) / GEO_FADE_MS);
+    alpha = 1 - t;
+    scale = 1 - 0.08 * t;
+    if (t >= 1) { geoReleaseAnchor(o); o.phase = 'far'; o.group.visible = false; return; }
+  }
+
+  o.imgMat.opacity = alpha;
+  o.crustMat.opacity = alpha;
+  o.shadowMat.opacity = alpha;
+  const s = Math.max(0.001, scale);
+  o.group.scale.setScalar(s);
+  o.group.position.set(o.pos.x, o.pos.y + lift, o.pos.z);
+  o.shadow.position.y = 0.001 - lift / s;              // سایه روی سطح می‌ماند
+  o.group.visible = true;
+}
+
+/** هر فریم (هم در حالت AR هم حالت ساده) صدا زده می‌شود. */
+function updateGeo(probe) {
+  const now = performance.now();
+  const dt = geo.lastT ? Math.min(0.1, (now - geo.lastT) / 1000) : 0;
+  geo.lastT = now;
+  const hyst = Math.min(10, Math.max(2, (geo.accuracy || 10) * 0.5));   // حاشیهٔ امن برابر نویز GPS
+  const tex = imageMaterial.map;
+
+  // ۱) فاصله تا هر لوکیشن (فقط GPS؛ فقط برای تصمیم ورود/خروج)
+  if (geo.pos) {
     geo.objs.forEach((o) => {
-      if (!o.locked) {
-        const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, o.loc.lat, o.loc.lon);
-        o.dist = Math.hypot(dE, dN);
-        o.bearing = (Math.atan2(dE, dN) * 180) / Math.PI;       // ساعت‌گرد از شمال
-        if (o.dist > geo.radius) { o.group.visible = false; return; }
-        o.locked = true;
-        o.wx = geo.camX + dE;                                    // شرق = +X
-        o.wz = geo.camZ - dN;                                    // شمال = −Z
-        o.yaw = Math.atan2(-dE, dN);                             // لبهٔ پایین عکس رو به کاربر، بعد از آن ثابت
-        toast('پیتزای «' + o.loc.name + '» قفل شد؛ اطرافتان را نگاه کنید.', 'info', 3000);
-      } else {
-        const ddx = o.wx - geo.camX;
-        const ddz = o.wz - geo.camZ;
-        o.dist = Math.hypot(ddx, ddz);
-        o.bearing = (Math.atan2(ddx, -ddz) * 180) / Math.PI;
-        if (o.dist > geo.radius * 2.5) {                         // خیلی دور شدید؛ قفل را رها کن تا دوباره با GPS تازه قفل شود
-          o.locked = false;
-          o.group.visible = false;
-          return;
-        }
-      }
-
-      const w = geo.size;
-      const thick = Math.max(0.02, w * 0.045);                   // لبهٔ کم‌ضخامت: پیتزا چسبیده به زمین
-      o.group.position.set(o.wx, 0, o.wz);
-      o.group.rotation.y = o.yaw;
-      o.mesh.scale.set(w, w, 1);                                 // دایره (عمق = عرض)
-      o.mesh.position.y = thick + 0.003;
-      o.crust.scale.set(w * 0.94, thick, w * 0.94);
-      o.crust.position.y = thick / 2;
-      o.shadow.scale.set(w * 1.12, w * 1.12, 1);
-      o.group.visible = true;
+      const { dE, dN } = enuOffset(geo.pos.lat, geo.pos.lon, o.loc.lat, o.loc.lon);
+      o.dist = Math.hypot(dE, dN);
+      o.bearing = (Math.atan2(dE, dN) * 180) / Math.PI;
     });
   }
 
-  // کارت اطلاعات (حداکثر ۴ بار در ثانیه)
-  const nowI = performance.now();
-  if (nowI - geo.lastInfoAt < 250) return;
-  geo.lastInfoAt = nowI;
+  // ۲) ماشین حالت
+  let seeker = null;
+  geo.objs.forEach((o) => {
+    if (o.imgMat.map !== tex) { o.imgMat.map = tex; o.imgMat.needsUpdate = true; }
+    const known = !!geo.pos;
+    const outside = known && o.dist > geo.radius + hyst;
+    switch (o.phase) {
+      case 'far':
+        if (known && o.dist <= geo.radius) { o.phase = 'seeking'; o.cand = null; o.candT = 0; o.farT = 0; }
+        break;
+      case 'seeking':
+        o.farT = outside ? o.farT + dt : 0;
+        if (o.farT >= GEO_LEAVE_HOLD_S) { o.phase = 'far'; break; }
+        if (!seeker || o.dist < seeker.dist) seeker = o;
+        break;
+      case 'placing':
+      case 'placed':
+        o.farT = outside ? o.farT + dt : 0;
+        if (o.farT >= GEO_LEAVE_HOLD_S) { o.phase = 'fading'; o.t0 = now; }
+        break;
+      default: break;                                    // fading
+    }
+  });
+
+  // ۳) جست‌وجوی خودکار سطح (هر بار فقط برای یک پیتزا) و انیمیشن‌ها
+  geo.seeking = !!seeker;
+  if (seeker) geoTrySurface(seeker, probe, dt);
+  geo.objs.forEach((o) => geoAnimate(o, probe, now));
+
+  // ۴) متن راهنما
+  let hint;
+  if (!geo.pos) hint = 'در انتظار GPS… بیرون از ساختمان بایستید.';
+  else if (geo.seeking) hint = geo.surface === 'hold' ? 'سطح پیدا شد؛ گوشی را چند لحظه ثابت نگه دارید…' : 'دوربین را آرام روی زمین یا یک سطح صاف بگیرید تا پیتزا بنشیند';
+  else if (geo.objs.some((o) => o.phase === 'placing' || o.phase === 'placed')) hint = 'پیتزا روی سطح ثابت شد؛ می‌توانید دور آن بچرخید.';
+  else hint = 'به‌سمت لوکیشن پیتزا بروید…';
+  if (hint !== lastHint) { $('hint').textContent = hint; lastHint = hint; }
+
+  // ۵) کارت اطلاعات (حداکثر ۴ بار در ثانیه)
+  if (now - geo.lastInfoAt < 250) return;
+  geo.lastInfoAt = now;
 
   if (!geo.objs.length) { $('geoName').textContent = 'لیست لوکیشن خالی است'; $('geoDetail').textContent = ''; return; }
   if (!geo.pos) {
@@ -1730,15 +1948,21 @@ function updateGeo() {
     return;
   }
   const nearest = geo.objs.reduce((a, b) => (b.dist < a.dist ? b : a));
-  _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-  const heading = (Math.atan2(_fwd.x, -_fwd.z) * 180) / Math.PI;
-  $('geoArrow').style.transform = 'rotate(' + (nearest.bearing - heading).toFixed(0) + 'deg)';
+  const arrow = $('geoArrow');
+  if (compass.heading !== null) {
+    arrow.style.opacity = '1';
+    arrow.style.transform = 'rotate(' + (nearest.bearing - compass.heading).toFixed(0) + 'deg)';
+  } else {
+    arrow.style.opacity = '0.3';
+    arrow.style.transform = 'none';
+  }
   $('geoName').textContent = nearest.loc.name + ' — ' + fmtDist(nearest.dist);
-  let detail = nearest.locked
-    ? 'پیتزا قفل شد ✓ و ثابت است؛ اطراف را نگاه کنید.'
-    : 'تا ' + fmtDist(geo.radius) + ' نزدیک شوید تا پیتزا خودکار قفل شود.';
+  let detail;
+  if (nearest.phase === 'far') detail = 'تا ورود به محدوده حدود ' + fmtDist(Math.max(0, nearest.dist - geo.radius)) + ' مانده.';
+  else if (nearest.phase === 'seeking') detail = 'وارد محدوده شدید؛ دوربین را روی سطح بگیرید.';
+  else if (nearest.phase === 'fading') detail = 'از محدوده دور شدید؛ پیتزا در حال محو شدن است.';
+  else detail = geo.xrMode ? 'پیتزا با AR تثبیت شد ✓ و دیگر به GPS وابسته نیست.' : 'پیتزا ثابت شد ✓ (حالت ساده، فقط چرخش ردیابی می‌شود).';
   if (geo.accuracy !== null) detail += ' · دقت GPS ±' + fa(Math.round(geo.accuracy)) + ' متر';
-  if (!gyro.northKnown) detail += ' · قطب‌نما نامشخص (جهت‌ها تقریبی‌اند)';
   $('geoDetail').textContent = detail;
 }
 
@@ -1898,6 +2122,7 @@ applyDisplayMode();
 syncUI();
 setPizzaTexture(PIZZA_DATA_URI, { silent: true });
 checkSupport().then((ok) => {
+  xrSupported = ok;
   $('btnStart').disabled = !ok;
   const camOk = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
   $('btnGyro').disabled = !camOk;
